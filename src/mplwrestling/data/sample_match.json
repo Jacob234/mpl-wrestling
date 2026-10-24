@@ -1,0 +1,109 @@
+{
+  "wrestlers": {
+    "green": "J. Alvarez (Home)",
+    "red": "K. Osei (Visitor)"
+  },
+  "rules": "ncaa",
+  "colors": {
+    "green": "#00843d",
+    "red": "#c8102e"
+  },
+  "metadata": {
+    "weight": "157 lb",
+    "event": "Dual meet (fictional sample data)",
+    "units": "feet"
+  },
+  "events": [
+    {
+      "time": 52.0,
+      "kind": "takedown",
+      "wrestler": "green",
+      "x": 6,
+      "y": -9
+    },
+    {
+      "time": 75.0,
+      "kind": "escape",
+      "wrestler": "red",
+      "x": 4,
+      "y": -7
+    },
+    {
+      "time": 140.0,
+      "kind": "takedown",
+      "wrestler": "red",
+      "x": -11,
+      "y": 3
+    },
+    {
+      "time": 170.0,
+      "kind": "near_fall",
+      "wrestler": "red",
+      "points": 2,
+      "x": -12,
+      "y": 5
+    },
+    {
+      "time": 180.0,
+      "kind": "position",
+      "wrestler": "green",
+      "position": "bottom",
+      "note": "green chose bottom"
+    },
+    {
+      "time": 195.0,
+      "kind": "escape",
+      "wrestler": "green",
+      "x": 1,
+      "y": 0.5
+    },
+    {
+      "time": 230.0,
+      "kind": "stall_warning",
+      "wrestler": "green"
+    },
+    {
+      "time": 262.0,
+      "kind": "takedown",
+      "wrestler": "green",
+      "x": 13,
+      "y": 6
+    },
+    {
+      "time": 300.0,
+      "kind": "position",
+      "wrestler": "red",
+      "position": "bottom",
+      "note": "red chose bottom"
+    },
+    {
+      "time": 330.0,
+      "kind": "near_fall",
+      "wrestler": "green",
+      "points": 3,
+      "x": 2,
+      "y": 1
+    },
+    {
+      "time": 395.0,
+      "kind": "reversal",
+      "wrestler": "red",
+      "x": -5,
+      "y": -3
+    },
+    {
+      "time": 400.0,
+      "kind": "escape",
+      "wrestler": "green",
+      "x": -7,
+      "y": -6
+    },
+    {
+      "time": 410.0,
+      "kind": "penalty",
+      "wrestler": "green",
+      "points": 1,
+      "note": "locked hands"
+    }
+  ]
+}

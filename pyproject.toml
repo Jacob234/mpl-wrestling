@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mplwrestling"
+version = "0.1.0"
+description = "Matplotlib visualizations for wrestling: mats, scoring timelines, positions and mat-zone heatmaps."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = ["matplotlib>=3.5", "numpy>=1.21", "pint>=0.18"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mplwrestling = ["data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
