@@ -106,7 +106,8 @@ THEMES = {
                                  passivity_color='#d9412b', center_line_color='#d9412b',
                                  home_color='#c8102e', visitor_color='#0b2a66'),
 }
-THEMES[MatStyle.CUSTOM] = THEMES[MatStyle.NCAA]
+THEMES[MatStyle.CUSTOM] = dict(THEMES[MatStyle.NCAA], passivity_color='#d9412b')
+CLIP_CHOICES = ('outer', 'competition')
 
 
 class WrestlingMat:
@@ -156,6 +157,10 @@ class WrestlingMat:
         or feet when ``units`` is 'mat_units'). Measurements you leave out are None,
         so that feature is not drawn.
         """
+        unknown = set(measurements) - set(MEASUREMENT_NAMES)
+        if unknown:
+            raise TypeError(f"Unknown measurement(s): {sorted(unknown)}. "
+                            f"Valid names: {list(MEASUREMENT_NAMES)}")
         native = native_units or ("feet" if units == MAT_UNITS else units)
         spec = {name: None for name in MEASUREMENT_NAMES}
         spec.update(measurements, competition_radius=competition_radius, protection_width=protection_width)
@@ -238,6 +243,8 @@ class WrestlingMat:
         edges = np.asarray(ring_edges if ring_edges is not None else self.default_ring_edges(), float)
         x, y = np.asarray(x, float), np.asarray(y, float)
         r = np.hypot(x, y)
+        # the boundary line is in bounds, so a point exactly on the circle belongs inside it
+        r = np.where(np.isclose(r, self.radius), np.nextafter(self.radius, 0), r)
         ring = np.clip(np.searchsorted(edges, r, side='right') - 1, 0, len(edges) - 2)
         angle = (np.degrees(np.arctan2(y, x)) - sector_offset) % 360
         sector = (angle // (360 / sectors)).astype(int)
@@ -270,6 +277,8 @@ class WrestlingMat:
         -------
         fig, ax : matplotlib figure and axes
         """
+        if home_side not in ('left', 'right'):
+            raise ValueError(f"home_side must be 'left' or 'right', not {home_side!r}")
         if ax is None:
             fig, ax = plt.subplots(figsize=figsize)
         else:
@@ -287,6 +296,7 @@ class WrestlingMat:
             p = d['passivity_zone_radius']
             ax.add_patch(patches.Wedge((0, 0), r, 0, 360, width=r - p, facecolor=theme['passivity_color'],
                                        edgecolor='none', zorder=z))
+        if self.style is MatStyle.INTERNATIONAL:
             self._draw_corners(ax, theme, z)
 
         if d['boundary_line_width']:
@@ -303,7 +313,8 @@ class WrestlingMat:
                 ax.add_patch(patches.Wedge((0, 0), c, 0, 360, width=width, facecolor=theme['center_line_color'],
                                            edgecolor='none', zorder=z))
 
-        if show_starting_lines and d['starting_line_length']:
+        if show_starting_lines and all(d[k] for k in ('starting_line_length', 'starting_line_gap',
+                                                     'starting_line_width')):
             self._draw_starting_lines(ax, theme, home_side, z)
 
         lim = outer * (1 + pad)
@@ -311,6 +322,7 @@ class WrestlingMat:
         ax.set_ylim(-lim, lim)
         ax.set_aspect('equal')
         ax.axis('off')
+        ax._mplwrestling_mat = self   # lets plot_events tell a drawn mat from other patches
         self.fig, self.ax = fig, ax
         return fig, ax
 
@@ -356,8 +368,14 @@ class WrestlingMat:
 
     def heatmap(self, x, y, ax=None, bins=24, cmap='magma', alpha=0.75, clip_to='outer', **kwargs):
         """2-D histogram of positions, clipped to the circle (``clip_to='competition'``) or the mat."""
+        if clip_to not in CLIP_CHOICES:
+            raise ValueError(f"clip_to must be one of {CLIP_CHOICES}, not {clip_to!r}")
         ax = self._require_ax(ax)
         outer = self.outer_radius
+        x, y = np.asarray(x, float), np.asarray(y, float)
+        if clip_to == 'competition':
+            keep = self.in_bounds(x, y)   # drop outside points so they don't tint edge bins
+            x, y = x[keep], y[keep]
         counts, xe, ye = np.histogram2d(x, y, bins=bins, range=[[-outer, outer], [-outer, outer]])
         counts = np.ma.masked_equal(counts.T, 0)
         mesh = ax.pcolormesh(xe, ye, counts, cmap=cmap, alpha=alpha, zorder=2, **kwargs)
@@ -377,10 +395,10 @@ class WrestlingMat:
         edges = list(ring_edges if ring_edges is not None else self.default_ring_edges())
         n_rings = len(edges) - 1 if include_out_of_bounds else len(edges) - 2
         ring, sector = self.zone_of(x, y, edges, sectors, sector_offset)
-        total = len(ring)
 
         keys = [(0, -1)] + [(i, s) for i in range(1, n_rings) for s in range(sectors)]
         counts = {k: int(np.sum((ring == k[0]) & (sector == k[1]))) for k in keys}
+        total = sum(counts.values())   # shares are of the points shown, so they add up to 100%
         values = {k: (v / total if (normalize and total) else v) for k, v in counts.items()}
         vmax = max(values.values()) or 1
         colormap = plt.get_cmap(cmap)

@@ -20,6 +20,8 @@ def test_elapsed_from_period_and_clock():
     assert simple_match("nfhs").elapsed(2, "1:00") == 180
     with pytest.raises(ValueError):
         m.elapsed(4, "1:00")
+    with pytest.raises(ValueError):
+        m.elapsed(2, "2:30")          # period 2 is only two minutes
 
 
 def test_default_points_and_penalty_goes_to_opponent():
@@ -38,6 +40,51 @@ def test_near_fall_validation():
     with pytest.raises(ValueError):
         m.add("near_fall", "green", time=10, points=5)
     m.add("near_fall", "green", time=10, points=4)
+
+
+def test_match_needs_two_wrestlers():
+    with pytest.raises(ValueError):
+        Match(wrestlers={"red": "Solo"})
+
+
+def test_negative_or_fractional_points_rejected():
+    m = simple_match()
+    with pytest.raises(ValueError):
+        m.add("penalty", "red", time=5, points=-1)
+    with pytest.raises(ValueError):
+        m.add("near_fall", "green", time=5, points=2.5)
+
+
+def test_rules_accept_mat_style_aliases():
+    assert Match(wrestlers={"red": "A", "blue": "B"}, rules="Greco-Roman").rules is mw.UWW_RULES
+    assert simple_match("high school").rules is mw.NFHS_RULES
+
+
+def test_default_points_are_read_only():
+    with pytest.raises(TypeError):
+        mw.NCAA_RULES.default_points[EventType.TAKEDOWN] = 2
+
+
+def test_tech_fall_ends_scoring():
+    m = simple_match("nfhs")
+    for t in (10, 20, 30, 40, 50):           # five takedowns, escapes in between
+        m.add("takedown", "green", time=t)
+        m.add("escape", "red", time=t + 5)
+    m.add("near_fall", "green", time=60, points=4)   # 19-5, a 14-point lead
+    m.add("takedown", "green", time=90)       # 22-5: the lead reaches 15 and the match ends
+    m.add("takedown", "green", time=110)      # after the tech fall; must not count
+    tech = m.tech_fall()
+    assert tech.time == 90
+    assert m.end_time == 90
+    assert m.final_score() == {"green": 22, "red": 5}
+    assert m.score_progression()[-1][2] is tech
+    assert m.result() == "green tech. fall red 22-5 1:30"
+
+
+def test_international_result_has_no_folkstyle_labels():
+    m = Match(wrestlers={"red": "A", "blue": "B"}, rules="freestyle")
+    m.add("points", "red", time=5, points=10)
+    assert m.result() == "red def. blue 10-0"
 
 
 def test_unknown_wrestler_and_event_type():

@@ -9,7 +9,10 @@ folkstyle (green is the home wrestler), ``'red'`` and ``'blue'`` internationally
 import json
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+from types import MappingProxyType
 from typing import Optional
+
+from .mat import MatStyle
 
 
 class EventType(Enum):
@@ -51,6 +54,12 @@ class Ruleset:
     riding_time: bool = False
     riding_time_threshold: float = 60.0
     corners: tuple = ("red", "green")
+    tech_fall_margin: Optional[int] = None   # lead that ends the match; None = not modelled
+    mat_style: str = "ncaa"                  # mat drawn by default for this ruleset
+
+    def __post_init__(self):
+        # read-only, so one match cannot change the scoring of every other match
+        object.__setattr__(self, "default_points", MappingProxyType(dict(self.default_points)))
 
 
 # Values checked against the 2025-27 NCAA rules book and the NFHS 2024-25 rule changes.
@@ -59,11 +68,14 @@ NCAA_RULES = Ruleset(
     period_lengths=(180, 120, 120),
     default_points={EventType.TAKEDOWN: 3, EventType.ESCAPE: 1, EventType.REVERSAL: 2},
     riding_time=True,
+    tech_fall_margin=15,
 )
 NFHS_RULES = Ruleset(
     name="nfhs",
     period_lengths=(120, 120, 120),
     default_points={EventType.TAKEDOWN: 3, EventType.ESCAPE: 1, EventType.REVERSAL: 2},
+    tech_fall_margin=15,
+    mat_style="high_school",
 )
 # International scoring depends on the move (2, 4 or 5 for takedowns and throws),
 # so every scoring event needs explicit points. Not verified against the current UWW rules.
@@ -72,19 +84,28 @@ UWW_RULES = Ruleset(
     period_lengths=(180, 180),
     default_points={},
     corners=("red", "blue"),
+    mat_style="international",
 )
 RULESETS = {"ncaa": NCAA_RULES, "college": NCAA_RULES, "folkstyle": NCAA_RULES,
             "nfhs": NFHS_RULES, "high_school": NFHS_RULES, "hs": NFHS_RULES,
             "uww": UWW_RULES, "international": UWW_RULES, "freestyle": UWW_RULES, "greco": UWW_RULES}
 
 
+_RULES_FOR_STYLE = {MatStyle.NCAA: NCAA_RULES, MatStyle.HIGH_SCHOOL: NFHS_RULES, MatStyle.INTERNATIONAL: UWW_RULES}
+
+
 def get_ruleset(rules):
+    """A Ruleset from itself, a ruleset name, or any mat-style alias ('greco-roman', 'folkstyle', ...)."""
     if isinstance(rules, Ruleset):
         return rules
+    cleaned = rules.strip().lower()
+    if cleaned in RULESETS:
+        return RULESETS[cleaned]
     try:
-        return RULESETS[rules.strip().lower()]
-    except KeyError:
-        raise ValueError(f"Unknown ruleset '{rules}'. Valid: {sorted(set(RULESETS))}") from None
+        return _RULES_FOR_STYLE[MatStyle.from_string(cleaned)]
+    except ValueError:
+        raise ValueError(f"Unknown ruleset '{rules}'. Valid: {sorted(set(RULESETS))} "
+                         f"or any mat-style alias") from None
 
 
 def format_clock(seconds):
@@ -137,6 +158,8 @@ class Match:
 
     def __post_init__(self):
         self.rules = get_ruleset(self.rules)
+        if len(self.wrestlers) != 2:
+            raise ValueError(f"A match needs exactly two wrestlers, got {len(self.wrestlers)}")
         self.events = [e if isinstance(e, Event) else Event(**e) for e in self.events]
         self.colors = {c: self.colors.get(c, self.DEFAULT_COLORS.get(c, "grey")) for c in self.wrestlers}
         self.validate()
@@ -167,6 +190,9 @@ class Match:
         if not 1 <= period <= len(lengths):
             raise ValueError(f"period must be 1..{len(lengths)} under {self.rules.name} rules")
         clock = parse_clock(clock)
+        if not 0 <= clock <= lengths[period - 1]:
+            raise ValueError(f"clock {format_clock(clock)} is outside period {period}, "
+                             f"which lasts {format_clock(lengths[period - 1])}")
         into_period = lengths[period - 1] - clock if clock_counts_down else clock
         return self.period_starts()[period - 1] + into_period
 
@@ -193,6 +219,8 @@ class Match:
         if event.kind is EventType.NEAR_FALL and self.rules.name in ("ncaa", "nfhs") \
                 and event.points not in (2, 3, 4):
             raise ValueError("Folkstyle near falls are worth 2, 3 or 4 points; pass points=")
+        if event.points is not None and (not isinstance(event.points, int) or event.points < 0):
+            raise ValueError(f"points must be a whole number of 0 or more, got {event.points!r}")
         if event.kind in (EventType.PENALTY, EventType.POINTS) and event.points is None:
             raise ValueError(f"{event.kind.value} events need explicit points")
         if self.points_for(event) is None:
@@ -218,11 +246,32 @@ class Match:
         """The FALL event, if the match ended in a pin."""
         return next((e for e in self.sorted_events() if e.kind is EventType.FALL), None)
 
+    def tech_fall(self):
+        """The scoring event that opened a technical-fall lead, if the match ended that way."""
+        margin = self.rules.tech_fall_margin
+        if margin is None:
+            return None
+        fall = self.fall()
+        score = {c: 0 for c in self.corners}
+        for event in self.sorted_events():
+            if fall is not None and event.time >= fall.time:
+                return None
+            pts = self.points_for(event)
+            if pts:
+                score[self.scorer(event)] += pts
+                a, b = self.corners
+                if abs(score[a] - score[b]) >= margin:
+                    return event
+        return None
+
     @property
     def end_time(self):
         fall = self.fall()
         if fall is not None:
             return fall.time
+        tech = self.tech_fall()
+        if tech is not None:
+            return tech.time
         last = max((e.time for e in self.events), default=0.0)
         return max(self.regulation_length, last)
 
@@ -236,6 +285,7 @@ class Match:
         rows = [(0.0, dict(score), None)]
         riding_added = False
         riding = self.riding_time() if include_riding_time and self.rules.riding_time else None
+        tech = self.tech_fall()
         for event in self.sorted_events():
             if event.time > self.end_time:
                 break
@@ -245,7 +295,7 @@ class Match:
             if pts:
                 score[self.scorer(event)] += pts
                 rows.append((event.time, dict(score), event))
-            if event.kind is EventType.FALL:
+            if event.kind is EventType.FALL or event is tech:
                 return rows
         if riding and not riding_added:
             self._apply_riding_point(score, riding, rows)
@@ -277,8 +327,12 @@ class Match:
         if self.fall() is not None:
             return f"{win} fall {lose} {format_clock(self.fall().time)}"
         s = self.final_score()
-        margin = s[win] - s[lose]
-        kind = "dec." if margin < 8 else ("maj. dec." if margin < 15 else "tech. fall")
+        tech = self.tech_fall()
+        if tech is not None:
+            return f"{win} tech. fall {lose} {s[win]}-{s[lose]} {format_clock(tech.time)}"
+        if self.rules.tech_fall_margin is None:   # no folkstyle labels for other styles
+            return f"{win} def. {lose} {s[win]}-{s[lose]}"
+        kind = "maj. dec." if s[win] - s[lose] >= 8 else "dec."
         return f"{win} {kind} {lose} {s[win]}-{s[lose]}"
 
     # ------------------------------------------------------------------ position and riding time

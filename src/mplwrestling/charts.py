@@ -4,7 +4,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 
-from .mat import WrestlingMat
+from .mat import DIMENSIONS, MatStyle, WrestlingMat
 from .match import SHORT_LABELS, EventType, format_clock
 
 EVENT_MARKERS = {EventType.TAKEDOWN: "o", EventType.ESCAPE: "^", EventType.REVERSAL: "s",
@@ -104,14 +104,31 @@ def position_strip(match, ax=None, figsize=(10, 1.2), show_riding_time=True):
     return ax
 
 
+def default_mat(match):
+    """The mat a match's locations are drawn on when no mat is given.
+
+    Uses the ruleset's mat style and ``match.metadata['units']``, falling back to the
+    style's native units (feet for folkstyle, meters internationally).
+    """
+    try:
+        style = MatStyle.from_string(match.rules.mat_style)
+    except ValueError:
+        style = MatStyle.NCAA
+    units = match.metadata.get("units") or DIMENSIONS[style]["units"]
+    return WrestlingMat(style, units=units)
+
+
 def plot_events(match, mat=None, ax=None, size=140, legend=True, label=True):
-    """Plot every event that has an (x, y) location on a mat, coloured by who scored."""
+    """Plot every event that has an (x, y) location on a mat, coloured by who scored.
+
+    Event coordinates must be in the mat's units; see :func:`default_mat`.
+    """
     if mat is None:
-        mat = WrestlingMat(match.rules.name if match.rules.name != "nfhs" else "high_school")
+        mat = default_mat(match)
     if ax is None:
         mat.draw()
         ax = mat.ax
-    elif not ax.patches:
+    elif getattr(ax, "_mplwrestling_mat", None) is None:
         mat.draw(ax=ax)
     located = [e for e in match.sorted_events() if e.has_location]
     for e in located:

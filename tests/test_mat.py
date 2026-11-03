@@ -83,6 +83,15 @@ def test_custom_mat():
     metric = WrestlingMat.custom(10 * ureg.feet, 3 * ureg.feet, units="meters")
     assert metric.radius == pytest.approx(3.048)
     youth.draw()
+    with pytest.raises(TypeError):
+        WrestlingMat.custom(10, 3, center_cirle_radius=4)     # typo is caught
+
+
+def test_custom_mat_partial_starting_lines_and_passivity_zone():
+    mat = WrestlingMat.custom(10, 3, starting_line_length=3, passivity_zone_radius=8)
+    fig, ax = mat.draw()                                  # no KeyError, no TypeError
+    corners = [p for p in ax.patches if type(p).__name__ == "Polygon"]
+    assert corners == []                                  # red/blue corners are international only
 
 
 def test_custom_style_requires_custom_constructor():
@@ -95,22 +104,36 @@ def test_draw_sets_square_limits(style):
     mat = WrestlingMat(style)
     fig, ax = mat.draw()
     xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
     assert xmax >= mat.outer_radius and xmin <= -mat.outer_radius
+    assert ymax >= mat.outer_radius and ymin <= -mat.outer_radius
     assert ax.get_aspect() == 1.0
     assert len(ax.patches) >= 2
     assert mat.fig is fig
 
 
+def _artists(ax):
+    return len(ax.patches) + len(ax.collections)
+
+
 def test_draw_on_existing_axes_and_toggles():
     import matplotlib.pyplot as plt
-    fig, ax = plt.subplots()
     mat = WrestlingMat("high_school")
+    fig, ax = plt.subplots()
     _, ax_full = mat.draw(ax=ax)
-    full = len(ax_full.patches) + len(ax_full.collections)
-    _, ax2 = plt.subplots()
-    mat.draw(ax=ax2, show_center_circle=False, show_starting_lines=False)
-    assert len(ax2.patches) + len(ax2.collections) < full
     assert ax_full is ax
+    full = _artists(ax)
+    _, no_circle = plt.subplots()
+    mat.draw(ax=no_circle, show_center_circle=False)
+    assert _artists(no_circle) == full - 1              # just the 10 ft circle
+    _, no_lines = plt.subplots()
+    mat.draw(ax=no_lines, show_starting_lines=False)
+    assert _artists(no_lines) == full - 3               # down lines + two neutral lines
+
+
+def test_draw_rejects_bad_home_side():
+    with pytest.raises(ValueError):
+        WrestlingMat("ncaa").draw(home_side="north")
 
 
 def test_in_bounds():
@@ -120,9 +143,9 @@ def test_in_bounds():
 
 def test_zone_of():
     mat = WrestlingMat("ncaa")   # rings at 0, 5.33, 10.67, 16, 21
-    ring, sector = mat.zone_of([0, 8, 0, -12, 18], [0, 0.1, 8, -0.1, 0], sectors=4)
-    assert ring.tolist() == [0, 1, 1, 2, 3]
-    assert sector.tolist() == [-1, 0, 1, 2, 0]   # (-12, -0.1) is just past 180 degrees
+    ring, sector = mat.zone_of([0, 8, 0, -12, 18, 16], [0, 0.1, 8, -0.1, 0, 0], sectors=4)
+    assert ring.tolist() == [0, 1, 1, 2, 3, 2]   # a point on the boundary line is in bounds
+    assert sector.tolist() == [-1, 0, 1, 2, 0, 0]   # (-12, -0.1) is just past 180 degrees
 
 
 def test_zone_heatmap_counts_everything_in_bounds():
@@ -135,10 +158,21 @@ def test_zone_heatmap_counts_everything_in_bounds():
     assert len(wedges) == 1 + 2 * 8
     shares, _ = mat.zone_heatmap(x, y, normalize=True, include_out_of_bounds=True)
     assert sum(shares.values()) == pytest.approx(1.0)
+    shares, _ = mat.zone_heatmap(np.append(x, 30), np.append(y, 0), normalize=True)
+    assert sum(shares.values()) == pytest.approx(1.0)   # out-of-bounds point is not in the denominator
 
 
 def test_heatmap_and_scatter_draw():
     mat = WrestlingMat("international", units="meters")
-    mat.scatter([0, 1], [0, 1])
+    points = mat.scatter([0, 1], [0, 1])
+    assert points in mat.ax.collections and len(points.get_offsets()) == 2
     mesh = mat.heatmap(np.zeros(10), np.zeros(10), clip_to="competition")
     assert mesh.get_clip_path() is not None
+    with pytest.raises(ValueError):
+        mat.heatmap([0], [0], clip_to="competiton")
+
+
+def test_clipped_heatmap_ignores_out_of_bounds_points():
+    mat = WrestlingMat("ncaa")
+    mesh = mat.heatmap([0, 16.5], [0, 0], bins=2, clip_to="competition")
+    assert mesh.get_array().sum() == 1
